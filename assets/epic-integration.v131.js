@@ -6,7 +6,7 @@
     sandboxFhirBase: 'https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/R4',
     redirectUri: 'https://e076319.github.io/praxsys-epic-integration-demo/',
     // Epic issues resource scopes based on APIs registered to this client. These scopes ask for user/patient/encounter launch context.
-    standaloneScope: 'openid fhirUser launch/patient launch/encounter',
+    standaloneScope: 'openid fhirUser',
     ehrLaunchScope: 'launch openid fhirUser'
   };
 
