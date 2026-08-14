@@ -1,9 +1,9 @@
-/* PraxSys Epic Integration Demo V1.3.4 - LDA result interpretation only. OAuth bootstrap intentionally untouched. */
+/* PraxSys Epic Integration Demo V1.3.3 - LDA viewer only. OAuth bootstrap intentionally untouched. */
 (function(){
   'use strict';
   function $(id){return document.getElementById(id);}
   function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
-  function entries(ctx){const all=ctx&&ctx.lda&&Array.isArray(ctx.lda.entry)?ctx.lda.entry:[];return all.filter(function(e){return e&&e.resource&&e.resource.resourceType==='Observation';});}
+  function entries(ctx){const es=ctx&&ctx.lda&&Array.isArray(ctx.lda.entry)?ctx.lda.entry:[];return es.filter(e=>e&&e.resource&&e.resource.resourceType==='Observation');}
   function codeLabel(r){const c=r&&r.code;if(!c)return 'Not returned';if(c.text)return c.text;const x=(c.coding||[])[0]||{};return x.display||x.code||'Not returned';}
   function valueLabel(r){if(!r)return 'Not returned';for(const k of ['valueString','valueDateTime','valueDate','valueInteger','valueDecimal','valueBoolean']){if(r[k]!==undefined&&r[k]!==null)return String(r[k]);}if(r.valueCodeableConcept){const cc=r.valueCodeableConcept,x=(cc.coding||[])[0]||{};return cc.text||x.display||x.code||'Codeable value returned';}if(r.valueQuantity){return [r.valueQuantity.value,r.valueQuantity.unit].filter(x=>x!==undefined&&x!==null&&x!=='').join(' ')||'Quantity returned';}return 'See FHIR JSON';}
   function show(){
