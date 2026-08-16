@@ -445,7 +445,84 @@ window.PRAXSYS_CLABSI_INSERTION_STEPS = [
 
   function renderRole(){return `<div class="card"><div class="section-label">Workspace selection</div><h1 class="card-title">Choose how you are using PraxSys</h1><div class="card-subtitle">The application presents different workflows for bedside observers and nursing leaders.</div></div><div class="tile-grid"><button class="tile ${state.role==='Clinician'?'selected':''}" data-role="Clinician"><h3>Clinician</h3><p>Review patient context, validate clinical criteria, and document insertion observations.</p></button><button class="tile ${state.role==='Manager'?'selected':''}" data-role="Manager"><h3>Manager</h3><p>Review quality trends, open events, and catheter insertion compliance.</p></button></div><div class="button-row"><button class="button primary" id="continueRole">Continue</button></div>`;}
 
-  function renderPatients(){const p=window.PRAXSYS_PATIENTS.john;const ctx=window.PRAXSYS_EPIC_CONTEXT||{};const ldaEntries=(ctx.lda&&ctx.lda.entry)||[];const ldaText=ldaEntries.length?`${ldaEntries.length} LDA observation${ldaEntries.length===1?'':'s'} returned`:'No LDA observations returned for this Epic sandbox patient';return `<div class="card"><div class="section-label">PraxSys Epic Integration Demo</div><h1 class="card-title">Epic patient context for CLABSI Prevention</h1><div class="card-subtitle">Demonstration Medical Center · Clinician/Observer workflow. Patient demographics and context below come from the authenticated Epic sandbox session.</div></div><div class="tile-grid"><button class="tile" data-patient="john"><h3>${p.name}</h3><p>${p.mrn}${p.age!==''?` · ${p.age} years`:''}${p.room?` · ${p.room}`:''}</p><span class="source-pill">Epic sandbox FHIR · live</span><span class="source-pill">${ldaText}</span></button></div><div class="card" style="margin-top:14px"><div class="section-label">Data provenance</div><div class="card-subtitle">Epic-sourced values are displayed only when returned by Epic. CLABSI pathway examples that are not returned by the sandbox remain clearly identified as PraxSys demonstration data.</div></div>`;}
+  function epicLdaObservations(){
+    const ctx=window.PRAXSYS_EPIC_CONTEXT||{};
+    const entries=(ctx.lda&&Array.isArray(ctx.lda.entry))?ctx.lda.entry:[];
+    return entries.map(e=>e&&e.resource).filter(r=>r&&r.resourceType==='Observation');
+  }
+  function codingDisplay(cc){
+    if(!cc) return '';
+    if(typeof cc==='string') return cc;
+    if(cc.text) return cc.text;
+    const c=(cc.coding||[]).find(x=>x&&(x.display||x.code));
+    return c ? (c.display||c.code||'') : '';
+  }
+  function componentDisplayValue(c){
+    if(!c) return '';
+    const keys=['valueString','valueDateTime','valueDate','valueTime','valueUri','valueBoolean','valueInteger','valueDecimal'];
+    for(const k of keys) if(c[k]!==undefined&&c[k]!==null&&c[k]!=='') return String(c[k]);
+    if(c.valueCodeableConcept) return codingDisplay(c.valueCodeableConcept);
+    if(c.valueQuantity) return [c.valueQuantity.value,c.valueQuantity.unit||c.valueQuantity.code].filter(v=>v!==undefined&&v!==null&&v!=='').join(' ');
+    if(c.valueReference) return c.valueReference.display||c.valueReference.reference||'';
+    if(c.valuePeriod) return c.valuePeriod.start||c.valuePeriod.end||'';
+    return '';
+  }
+  function findComponent(obs,patterns){
+    const comps=(obs&&obs.component)||[];
+    return comps.find(c=>{
+      const label=(codingDisplay(c.code)||'').toLowerCase();
+      return patterns.some(p=>label.includes(p));
+    });
+  }
+  function firstText(...vals){return vals.find(v=>v!==undefined&&v!==null&&String(v).trim()!=='')||'';}
+  function canonicalLineType(source){
+    const t=String(source||'').toLowerCase();
+    if(!t) return 'UNKNOWN';
+    if(t.includes('picc')||t.includes('peripherally inserted')) return 'PICC';
+    if(t.includes('port')||t.includes('implanted')) return 'IMPLANTED_PORT';
+    if(t.includes('dialysis')||t.includes('hemodialysis')||t.includes('vas cath')||t.includes('vas-cath')) return 'DIALYSIS_CATHETER';
+    if(t.includes('tunneled')||t.includes('hickman')||t.includes('broviac')) return 'TUNNELED_CVC';
+    if(t.includes('central')||t.includes('cvc')||t.includes('cvad')||t.includes('triple lumen')||t.includes('double lumen')) return 'CVC';
+    return 'UNKNOWN';
+  }
+  function mapEpicLda(obs){
+    if(!obs) return null;
+    const typeSource=codingDisplay(obs.code);
+    const siteComp=findComponent(obs,['body site','site','location']);
+    const methodComp=findComponent(obs,['insertion method','method of insertion','insert method']);
+    const insertionComp=findComponent(obs,['insertion time','insertion date','inserted','placement time','placement date']);
+    const assessmentComp=findComponent(obs,['assessment','condition','appearance','dressing','site assessment']);
+    const bodySite=firstText(codingDisplay(obs.bodySite),componentDisplayValue(siteComp));
+    const inserted=firstText(obs.effectivePeriod&&obs.effectivePeriod.start,obs.effectiveDateTime,componentDisplayValue(insertionComp));
+    const method=componentDisplayValue(methodComp);
+    const assessment=componentDisplayValue(assessmentComp);
+    return {
+      line_id:obs.id||'',
+      line_type_source_text:typeSource,
+      line_type:canonicalLineType(typeSource),
+      line_insertion_datetime:inserted,
+      line_body_site_source:bodySite,
+      line_body_site:bodySite,
+      line_insertion_method_source:method,
+      line_insertion_method:method,
+      line_active:true,
+      line_assessment:assessment,
+      line_assessment_datetime:firstText(obs.issued,obs.effectiveDateTime,obs.effectivePeriod&&obs.effectivePeriod.start),
+      encounter_reference:obs.encounter&&(obs.encounter.display||obs.encounter.reference)||'',
+      patient_reference:obs.subject&&(obs.subject.display||obs.subject.reference)||'',
+      raw:obs
+    };
+  }
+  function liveLdaMapping(){
+    const obs=epicLdaObservations();
+    return {observations:obs,mapped:obs.map(mapEpicLda).filter(Boolean)};
+  }
+  function displayOrNotAvailable(v){return v!==undefined&&v!==null&&String(v).trim()!==''?String(v):'Not available from EHR';}
+  function epicMappingCell(label,value,canonical,sourceText){
+    return `<div class="data-cell"><div class="data-label">${label}</div><div class="data-value">${displayOrNotAvailable(value)}</div><div class="mapping-tag verified">Epic Live${canonical?` → ${canonical}`:''}</div>${sourceText?`<div class="card-subtitle" style="margin-top:6px">Epic source: ${sourceText}</div>`:''}</div>`;
+  }
+
+  function renderPatients(){const p=window.PRAXSYS_PATIENTS.john;const ldaCount=epicLdaObservations().length;const ldaText=ldaCount?`${ldaCount} LDA observation${ldaCount===1?'':'s'} returned`:'No LDA observations returned for this Epic sandbox patient';return `<div class="card"><div class="section-label">PraxSys Epic Integration Demo</div><h1 class="card-title">Epic patient context for CLABSI Prevention</h1><div class="card-subtitle">Demonstration Medical Center · Clinician/Observer workflow. Patient demographics and context below come from the authenticated Epic sandbox session.</div></div><div class="tile-grid"><button class="tile" data-patient="john"><h3>${p.name}</h3><p>${p.mrn}${p.age!==''?` · ${p.age} years`:''}${p.room?` · ${p.room}`:''}</p><span class="source-pill">Epic sandbox FHIR · live</span><span class="source-pill">${ldaText}</span></button></div><div class="card" style="margin-top:14px"><div class="section-label">Data provenance</div><div class="card-subtitle">Epic-sourced values are displayed only when returned by Epic. OperationOutcome warnings are not counted as LDA observations. CLABSI pathway examples that are not returned by the sandbox remain clearly identified as PraxSys demonstration data.</div></div>`;}
 
   function renderConditions(){return shell(`<button class="back-link" data-back="patients">← Back</button><div class="card"><div class="section-label">Clinical focus</div><h1 class="card-title">Select a patient safety condition</h1></div><div class="tile-grid"><button class="tile" data-condition="CAUTI"><h3>CAUTI</h3><p>Catheter-associated urinary tract infection prevention and insertion observation.</p></button><button class="tile" data-condition="CLABSI"><h3>CLABSI</h3><p>Central line-associated bloodstream infection.</p></button><button class="tile" data-condition="FALLS"><h3>Falls</h3><p>Fall prevention observation and corrective action follow-up.</p></button><button class="tile"><h3>Pressure Injury</h3><p>Skin integrity and pressure injury prevention.</p></button></div>`,`<div class="card"><div class="section-label">Selected patient</div><h2 class="card-title">${patient().name}</h2><div class="card-subtitle">${patient().unit} ${patient().room}<br>${patient().encounter}</div></div>`);}
 
@@ -493,7 +570,18 @@ window.PRAXSYS_CLABSI_INSERTION_STEPS = [
   function renderClabsiCompletion(){const c=state.clabsiCompletion||{};const outstanding=state.clabsiResults.filter(r=>r.actionStatus==='Requires follow-up').length;return shell(`<div class="card"><div class="section-label">CLABSI Insertion Pathway</div><h1 class="card-title">${c.status||'Pathway complete'}</h1><div class="card-subtitle">${c.summary||''}</div>${outstanding?`<div class="inline-action danger" style="margin-top:16px"><strong>${outstanding} corrective action${outstanding===1?'':'s'} require follow-up.</strong> These items are available to nursing leadership in Outstanding Corrective Actions.</div>`:''}<div class="button-row"><button class="button primary" id="returnClabsiPatients">Return to patient list</button></div></div>`,`<div class="card"><div class="section-label">Observation summary</div><div class="data-cell"><div class="data-label">Corrective actions</div><div class="data-value">${state.clabsiResults.filter(r=>r.answer==='no').length}</div></div><div class="data-cell" style="margin-top:10px"><div class="data-label">Outstanding follow-up</div><div class="data-value">${outstanding}</div></div></div>`);}
 
   function clabsiPreventionStep(){return window.PRAXSYS_CLABSI_PREVENTION_STEPS[state.clabsiPreventionStep];}
-  function renderClabsiPreventionHome(){const p=patient();return shell(`<button class="back-link" data-back="patients">← Back</button><div class="card"><div class="section-label">CLABSI Prevention Pathway</div><h1 class="card-title">Central line prevention and maintenance observation</h1><div class="card-subtitle">Focused Epic integration demonstration using the existing CLABSI Prevention pathway.</div><div class="button-row"><button class="button primary" id="startClabsiPreventionPathway">Begin prevention review</button></div></div><div class="ehr-panel" style="margin-top:14px"><div class="section-label">CLABSI scenario data · PraxSys demonstration</div><div class="ehr-grid"><div class="data-cell"><div class="data-label">Active LDA</div><div class="data-value">${p.centralLineType}</div><div class="mapping-tag verified">Verified API pattern · Epic FHIR Observation (LDA)</div></div><div class="data-cell"><div class="data-label">Insertion site</div><div class="data-value">${p.centralLineSite}</div><div class="mapping-tag verified">Verified API pattern · LDA property</div></div><div class="data-cell"><div class="data-label">Insertion date/time</div><div class="data-value">${p.centralLineInserted}</div><div class="mapping-tag verified">Verified API pattern · LDA property</div></div><div class="data-cell"><div class="data-label">Documented indication</div><div class="data-value">${p.centralLineIndication}</div><div class="mapping-tag configured">Hospital-configured mapping</div></div></div></div>`,`<div class="card"><div class="section-label">Integration legend</div><div class="integration-legend"><span class="mapping-tag verified">Epic-documented API pattern</span><span class="mapping-tag configured">Hospital-configured mapping</span><span class="mapping-tag observed">PraxSys observation</span></div><div class="card-subtitle" style="margin-top:12px">This session has a live Epic sandbox connection. Patient context is Epic-sourced; CLABSI-specific scenario fields remain demonstration data unless returned by the Epic LDA query.</div></div>`);}
+  function renderClabsiPreventionHome(){
+    const p=patient();
+    const live=liveLdaMapping();
+    const m=live.mapped[0]||null;
+    const livePanel=m
+      ? `<div class="ehr-panel" style="margin-top:14px"><div class="section-label">Epic live LDA mapping</div><div class="card-subtitle" style="margin-bottom:12px">Values in this panel were returned by the current Epic sandbox FHIR session and mapped to PraxSys canonical fields. The original Epic value is retained where applicable.</div><div class="ehr-grid">${epicMappingCell('Active LDA / line type',m.line_type,'line_type',m.line_type_source_text)}${epicMappingCell('Insertion site',m.line_body_site,'line_body_site',m.line_body_site_source)}${epicMappingCell('Insertion date/time',m.line_insertion_datetime,'line_insertion_datetime','')}${epicMappingCell('Insertion method',m.line_insertion_method,'line_insertion_method',m.line_insertion_method_source)}</div><div class="card-subtitle" style="margin-top:12px">FHIR Observation ID: ${displayOrNotAvailable(m.line_id)}${live.mapped.length>1?` · ${live.mapped.length} active LDA Observations returned`:''}</div></div>`
+      : `<div class="ehr-panel" style="margin-top:14px"><div class="section-label">Epic live LDA mapping</div><div class="card-subtitle">No actual FHIR Observation resource was returned for this patient's LDA search. PraxSys will not invent or infer line values.</div></div>`;
+    const demoPanel=`<div class="ehr-panel" style="margin-top:14px"><div class="section-label">CLABSI scenario data · PraxSys demonstration</div><div class="ehr-grid"><div class="data-cell"><div class="data-label">Scenario line type</div><div class="data-value">${p.centralLineType}</div><div class="mapping-tag configured">Demonstration value · not Epic Live</div></div><div class="data-cell"><div class="data-label">Scenario insertion site</div><div class="data-value">${p.centralLineSite}</div><div class="mapping-tag configured">Demonstration value · not Epic Live</div></div><div class="data-cell"><div class="data-label">Scenario insertion date/time</div><div class="data-value">${p.centralLineInserted}</div><div class="mapping-tag configured">Demonstration value · not Epic Live</div></div><div class="data-cell"><div class="data-label">Documented indication</div><div class="data-value">${p.centralLineIndication}</div><div class="mapping-tag configured">Clinician-confirmed / hospital mapping for demo</div></div></div></div>`;
+    return shell(`<button class="back-link" data-back="patients">← Back</button><div class="card"><div class="section-label">CLABSI Prevention Pathway</div><h1 class="card-title">Central line prevention and maintenance observation</h1><div class="card-subtitle">Focused Epic integration demonstration using the existing CLABSI Prevention pathway.</div><div class="button-row"><button class="button primary" id="startClabsiPreventionPathway">Begin prevention review</button></div></div>${livePanel}${demoPanel}`,
+      `<div class="card"><div class="section-label">Integration legend</div><div class="integration-legend"><span class="mapping-tag verified">Epic Live</span><span class="mapping-tag configured">Demonstration / hospital mapping</span><span class="mapping-tag observed">PraxSys observation</span></div><div class="card-subtitle" style="margin-top:12px">Epic Live labels appear only when the current FHIR response contains the value. Missing optional values are shown as “Not available from EHR” and do not block the pathway.</div></div>`);
+  }
+
   function renderClabsiPreventionObservation(){const d=clabsiPreventionStep();let body='';let can=false;
     if(d.step===1){body=`<div class="ehr-panel"><div class="section-label">CLABSI scenario data · PraxSys demonstration</div><div class="data-cell"><div class="data-label">Current central line order / indication</div><div class="data-value">${patient().centralLineIndication}</div><div class="mapping-tag configured">Hospital-configured Epic mapping · exact source varies by organization</div></div></div><label class="ack-row"><input type="checkbox" id="clabsiPreventionAck" ${state.clabsiPreventionAck?'checked':''}><span>I acknowledge that I reviewed the current central line order and documented indication.</span></label>`;can=state.clabsiPreventionAck;}
     else {const labels={yes:'Yes',no:'No',unable:'Unable to Determine',notObserved:'Not Observed',na:'Not Applicable'};body=`<div class="decision-row">${d.options.map(o=>`<button class="decision ${o==='yes'?'yes':(o==='no'?'no':'')} ${state.clabsiPreventionAnswer===o?'active':''}" data-clabsi-prevention-answer="${o}">${labels[o]}</button>`).join('')}</div>`;const corrective=state.clabsiPreventionAnswer==='no'||state.clabsiPreventionAnswer==='unable';if(corrective&&d.action){body+=`<div class="inline-action danger"><strong>Corrective action required:</strong> ${d.action}<div class="section-label" style="margin-top:14px">Corrective action status</div><div class="decision-row"><button class="decision yes ${state.clabsiPreventionActionStatus==='Completed during observation'?'active':''}" data-clabsi-prevention-action="Completed during observation">Completed during observation</button><button class="decision no ${state.clabsiPreventionActionStatus==='Requires follow-up'?'active':''}" data-clabsi-prevention-action="Requires follow-up">Requires follow-up</button></div></div>`;}can=!!state.clabsiPreventionAnswer&&(!corrective||!!state.clabsiPreventionActionStatus);}
