@@ -1,4 +1,23 @@
 # praxsys-epic-integration-demo
+
+PraxSys Epic Integration Demonstration
+
+## V1.3.9 - 2026-08-28
+
+Controlled reset/build-identification update based on V1.3.8.
+
+Changes from V1.3.8:
+- Preserves the V1.3.8 Epic OAuth/SMART and post-authentication logic unchanged.
+- Activates the existing narrowly scoped `praxsys-stability-patch.v1.js` reset handler so **Reset demo** clears only this browser tab's SMART/session state and returns to the clean registered integration URL.
+- Adds a visible `Build V1.3.9 · 2026-08-28` label in the application header.
+- No Epic registration, client ID, redirect URI, FHIR base/audience, scope, PKCE, clinical pathway, mapping, or patient-data logic is changed.
+- Complete self-contained deployment package; it may be extracted to any folder chosen by the user.
+
+---
+
+Previous build notes:
+
+# praxsys-epic-integration-demo
 PraxSys Epic Integration Demonstration
 
 
