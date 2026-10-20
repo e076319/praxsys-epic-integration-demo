@@ -167,7 +167,7 @@
     function tryLoad(){
       attempts++;
       const s=document.createElement('script');
-      s.src='assets/app.86a9de1a1e.v12.js?v=138'+(attempts>1?'&retry='+attempts:'');
+      s.src='app.86a9de1a1e.v12.js?v=138'+(attempts>1?'&retry='+attempts:'');
       s.onload=()=>{
         document.body.classList.remove('epic-gateway-active');
         if(g) g.hidden=true;
